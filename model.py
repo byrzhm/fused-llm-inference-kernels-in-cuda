@@ -16,8 +16,15 @@ __device__ float warp_reduce_sum(float val) {
     return val;
 }
 
-# Step 2 - warp_reduce_max (not yet solved)
-# TODO: implement
+# Step 2 - warp_reduce_max
+__device__ float warp_reduce_max (float val) {
+    // implement warp-level max reduction using shuffle intrinsics
+    int mask = __activemask ();
+    for (int off = warpSize / 2; off > 0; off >>= 1)
+        val = fmaxf (val, __shfl_down_sync (mask, val, off));
+    val = __shfl_sync (mask, val, 0);
+    return val;
+}
 
 # Step 3 - block_reduce_sum (not yet solved)
 # TODO: implement
