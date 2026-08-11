@@ -112,11 +112,78 @@ __global__ void swiglu_kernel (const float* gate, const float* up, float* out, i
     }
 }
 
-# Step 9 - rmsnorm_kernel (not yet solved)
-# TODO: implement
+# Step 9 - rmsnorm_kernel
+__global__ void
+rmsnorm_kernel (const float* x, const float* weight, float* out, int n, float eps) {
+    // Apply RMSNorm per row (one block per row)
+    int tid    = threadIdx.x;
+    int warpId = tid / warpSize;
+    int laneId = tid % warpSize;
 
-# Step 10 - layernorm_kernel (not yet solved)
-# TODO: implement
+    const int rowId = blockIdx.x;
+    const float *x_row = x + rowId * n;
+    float *out_row = out + rowId * n;
+
+    __shared__ float smem[32];
+
+
+    float val = 0.0f;
+    for (int i = tid; i < n; i += blockDim.x) {
+        val += x_row[i] * x_row[i];
+    }
+
+    float sum = block_reduce_sum (val, smem);
+    if (tid == 0) {
+        smem[0] = rsqrtf (sum / n + eps);
+    }
+    __syncthreads ();
+
+    float inv_rms = smem[0];
+
+    for (int i = tid; i < n; i += blockDim.x) {
+        out_row[i] = x_row[i] * weight[i] * inv_rms;
+    }
+}
+
+# Step 10 - layernorm_kernel
+__global__ void
+layernorm_kernel (const float* x, const float* weight, const float* bias, float* out, int n, float eps) {
+    // per-row LayerNorm using block_reduce_sum for mean and variance
+    const int tid = threadIdx.x;
+    const int rowId = blockIdx.x;
+
+    const float *x_row = x + rowId * n;
+    float *out_row = out + rowId * n;
+
+    float val = 0.0f;
+    for (int i = tid; i < n; i += blockDim.x)
+        val += x_row[i];
+
+    __shared__ float smem[32];
+
+    float sum = block_reduce_sum(val, smem);
+    if (tid == 0)
+        smem[0] = sum / n;
+    __syncthreads();
+
+    float mean = smem[0];
+
+    val = 0.0f;
+    for (int i = tid; i < n; i += blockDim.x) {
+        float t = x_row[i] - mean;
+        val += t * t;
+    }
+    sum = block_reduce_sum(val, smem);
+    if (tid == 0) {
+        smem[0] = rsqrtf(sum / n + eps);
+    }
+    __syncthreads();
+    
+    float inv_std = smem[0];
+
+    for (int i = tid; i < n; i += blockDim.x)
+        out_row[i] = (x_row[i] - mean) * inv_std * weight[i] + bias[i];
+}
 
 # Step 11 - fused_add_rmsnorm_kernel (not yet solved)
 # TODO: implement
