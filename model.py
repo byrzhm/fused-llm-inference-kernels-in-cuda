@@ -185,8 +185,48 @@ layernorm_kernel (const float* x, const float* weight, const float* bias, float*
         out_row[i] = (x_row[i] - mean) * inv_std * weight[i] + bias[i];
 }
 
-# Step 11 - fused_add_rmsnorm_kernel (not yet solved)
-# TODO: implement
+# Step 11 - fused_add_rmsnorm_kernel
+__global__ void fused_add_rmsnorm_kernel(
+    const float* x,
+    const float* residual,
+    const float* weight,
+    float* out,
+    float* residual_out,
+    int n,
+    float eps
+) {
+    // fuse residual addition with RMSNorm (one block per row)
+    const int tid = threadIdx.x;
+    const int rowId = blockIdx.x;
+
+    x = x + rowId * n;
+    residual = residual + rowId * n;
+    out = out + rowId * n;
+    residual_out = residual_out + rowId * n;
+
+    __shared__ float smem[32];
+    float val;
+    float sum;
+    float inv_rms;
+
+    val = 0.0f;
+    for (int i = tid; i < n; i += blockDim.x) {
+        float r = x[i] + residual[i];
+        residual_out[i] = r;
+        val += r * r;
+    }
+
+    sum = block_reduce_sum(val, smem);
+    if (tid == 0) {
+        smem[0] = rsqrtf(sum / n + eps);
+    }
+    __syncthreads();
+    
+    inv_rms = smem[0];
+
+    for (int i = tid; i < n; i += blockDim.x)
+        out[i] = residual_out[i] * inv_rms * weight[i];
+}
 
 # Step 12 - softmax_row_kernel (not yet solved)
 # TODO: implement
