@@ -283,7 +283,7 @@ __global__ void causal_softmax_kernel (const float* x, float* out, int rows, int
     const int tid = threadIdx.x;
     const int numThreads = blockDim.x;
 
-    extern __shared__ float smem[];
+    __shared__ float smem[32];
 
     const float *x_row = x + rowId * cols;
     float *out_row = out + rowId * cols;
@@ -299,6 +299,7 @@ __global__ void causal_softmax_kernel (const float* x, float* out, int rows, int
     if (tid == 0) smem[0] = row_max;
     __syncthreads();
     row_max = smem[0];
+    __syncthreads();
 
     val = 0.0f;
     for (int i = tid; i < cols && i <= rowId; i += numThreads)
