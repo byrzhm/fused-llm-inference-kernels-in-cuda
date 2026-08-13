@@ -228,8 +228,44 @@ __global__ void fused_add_rmsnorm_kernel(
         out[i] = residual_out[i] * inv_rms * weight[i];
 }
 
-# Step 12 - softmax_row_kernel (not yet solved)
-# TODO: implement
+# Step 12 - softmax_row_kernel
+__global__ void softmax_row_kernel (const float* x, float* out, int rows, int cols) {
+    // implement numerically stable row-wise softmax (one block per row)
+    const int rowId = blockIdx.x;
+    const int tid = threadIdx.x;
+    const int warpId = tid / warpSize;
+    const int laneId = tid % warpSize;
+    const int numThreads = blockDim.x;
+
+    extern __shared__ float smem[];
+    
+    const float *x_row = x + rowId * cols;
+    float *out_row = out + rowId * cols;
+    float val;
+    float row_max;
+    float row_sum;
+
+    val = -FLT_MAX;
+    for (int i = tid; i < cols; i += numThreads)
+        val = fmaxf(val, x_row[i]);
+    row_max = block_reduce_max(val, smem);
+    if (tid == 0)
+        smem[0] = row_max; 
+    __syncthreads();
+    row_max = smem[0];
+    
+    val = 0.0f;
+    for (int i = tid; i < cols; i += numThreads)
+        val += expf(x_row[i] - row_max);
+    row_sum = block_reduce_sum(val, smem);
+    if (tid == 0)
+        smem[0] = row_sum;
+    __syncthreads();
+    row_sum = smem[0];
+
+    for (int i = tid; i < cols; i += numThreads)
+        out_row[i] = expf(x_row[i] - row_max) / row_sum;
+}
 
 # Step 13 - causal_softmax_kernel (not yet solved)
 # TODO: implement
