@@ -20,7 +20,11 @@ __device__ float warp_reduce_sum(float val) {
 __device__ float warp_reduce_max (float val) {
     // implement warp-level max reduction using shuffle intrinsics
     int mask = __activemask ();
-    for (int off = warpSize / 2; off > 0; off >>= 1)
+    int active = __popc(mask);
+    int max_off = 1;
+    while (max_off < active) max_off <<= 1;
+    max_off >>= 1;
+    for (int off = max_off; off > 0; off >>= 1)
         val = fmaxf (val, __shfl_down_sync (mask, val, off));
     val = __shfl_sync (mask, val, 0);
     return val;
@@ -267,8 +271,43 @@ __global__ void softmax_row_kernel (const float* x, float* out, int rows, int co
         out_row[i] = expf(x_row[i] - row_max) / row_sum;
 }
 
-# Step 13 - causal_softmax_kernel (not yet solved)
-# TODO: implement
+# Step 13 - causal_softmax_kernel
+__global__ void causal_softmax_kernel (const float* x, float* out, int rows, int cols) {
+    // numerically stable causal softmax (one block per row);
+    // mask columns c > row to 0; use block_reduce_max / block_reduce_sum
+    const int rowId = blockIdx.x;
+    const int tid = threadIdx.x;
+    const int numThreads = blockDim.x;
+
+    extern __shared__ float smem[];
+
+    const float *x_row = x + rowId * cols;
+    float *out_row = out + rowId * cols;
+
+    float val;
+    float row_max;
+    float row_sum;
+
+    val = -FLT_MAX;
+    for (int i = tid; i < cols && i <= rowId; i += numThreads)
+        val = fmaxf(val, x_row[i]);
+    row_max = block_reduce_max(val, smem);
+    if (tid == 0) smem[0] = row_max;
+    __syncthreads();
+    row_max = smem[0];
+
+    val = 0.0f;
+    for (int i = tid; i < cols && i <= rowId; i += numThreads)
+        val += expf(x_row[i] - row_max);
+    row_sum = block_reduce_sum(val, smem);
+    if (tid == 0) smem[0] = row_sum;
+    __syncthreads();
+    row_sum = smem[0];
+
+    for (int i = tid; i < cols; i += numThreads) {
+        out_row[i] = (i <= rowId) ? expf(x_row[i] - row_max) / row_sum : 0.0f;
+    }
+}
 
 # Step 14 - embedding_lookup_kernel (not yet solved)
 # TODO: implement
